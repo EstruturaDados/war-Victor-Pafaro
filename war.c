@@ -46,5 +46,16 @@ int main(){
 
     }while(totalTerritorio < MAX_TERRITORIOS);
 
+    printf("\n======================================= ");
+    printf("\n     MAPA DO MUNDO - ESTADO ATUAL       ");
+    printf("\n======================================= ");   
+
+    for(int i = 0; i<totalTerritorio; i++){
+        printf("\n\nTERRITORIO %d: ", i + 1);
+        printf("\n   - Nome: %s", territorios[i].nome);
+        printf("\n   - Dominado por: Exercito %s", territorios[i].cor);
+        printf("\n   - Tropas: %d \n\n", territorios[i].tropas);
+    }
+
     return 0;
 }
