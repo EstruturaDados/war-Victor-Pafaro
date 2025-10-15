@@ -6,6 +6,8 @@
 // Definições de constantes
 #define TAM_NOME 30
 #define TAM_COR 10
+#define TAM_MISSAO 100
+#define MAX_MISSOES 5 // Número de missões pré-definidas
 
 // --- Estrutura de Dados ---
 /**
@@ -17,14 +19,42 @@ struct Territorio {
     int tropas;
 };
 
+/**
+ * @brief Representa um jogador/exército no jogo, que possui uma missão.
+ */
+struct Jogador {
+    char cor[TAM_COR];
+    char *missao; // Armazenamento dinâmico da missão
+    int missaoCumprida;
+};
+
 // --- Protótipos das Funções ---
 void limparBufferEntrada();
+int rolarDado();
+
+// Funções de Gerenciamento de Territórios
 void cadastrarTerritorios(struct Territorio *mapa, int totalTerritorios);
 void exibirTerritorios(const struct Territorio *mapa, int totalTerritorios);
-int rolarDado();
 void atacar(struct Territorio *atacante, struct Territorio *defensor);
-void simularJogo(struct Territorio *mapa, int totalTerritorios);
-void liberarMemoria(struct Territorio *mapa);
+
+// Funções de Missão e Jogadores
+void inicializarJogadores(struct Territorio *mapa, int totalTerritorios, struct Jogador **jogadores, int *totalJogadores);
+void atribuirMissao(char* destino, const char* missoes[], int totalMissoes);
+void exibirMissao(const char* missao);
+int verificarMissao(const char* missao, const struct Territorio* mapa, int totalTerritorios, const char* corJogador);
+
+// Funções do Jogo e Memória
+void simularJogo(struct Territorio *mapa, int totalTerritorios, struct Jogador *jogadores, int totalJogadores);
+void liberarMemoria(struct Territorio *mapa, struct Jogador *jogadores, int totalJogadores);
+
+// --- Vetor de Missões Pré-Definidas ---
+const char *MISSOES[MAX_MISSOES] = {
+    "Conquistar 4 territórios seguidos em um único turno.",
+    "Eliminar completamente todas as tropas do exército 'Vermelho'.",
+    "Conquistar 5 territórios que possuam mais de 3 tropas.",
+    "Possuir 3 territórios na América do Sul e 2 na África.", // Simplificação: verificar por nome específico
+    "Conquistar um total de 7 territórios ao longo do jogo."
+};
 
 // --- Funções Auxiliares ---
 
@@ -45,7 +75,7 @@ int rolarDado() {
     return (rand() % 6) + 1;
 }
 
-// --- Funções Principais de Gerenciamento ---
+// --- Funções Principais de Gerenciamento de Territórios ---
 
 /**
  * @brief Aloca memória e solicita o cadastro inicial dos territórios.
@@ -130,6 +160,11 @@ void atacar(struct Territorio *atacante, struct Territorio *defensor) {
 
         // Requisito: O território defensor deve mudar de dono (cor do exército)
         // Requisito: Transfere a cor
+        // NOTE: Se o defensor perder a cor, isso pode afetar a contagem de territórios do jogador original.
+        // Na lógica do WAR, o atacante move as tropas para o novo território.
+        char corAntiga[TAM_COR];
+        strcpy(corAntiga, defensor->cor); // Guarda a cor antiga para possível verificação de eliminação
+
         strcpy(defensor->cor, atacante->cor);
 
         // Requisito: Transfere metade das tropas para o território defensor
@@ -163,12 +198,157 @@ void atacar(struct Territorio *atacante, struct Territorio *defensor) {
 }
 
 
+// --- Funções de Missão e Jogadores ---
+
+/**
+ * @brief Identifica as cores de exército únicas e as inicializa como Jogadores, atribuindo uma missão.
+ * @param mapa Ponteiro para o array de territórios.
+ * @param totalTerritorios Número total de territórios.
+ * @param jogadores Ponteiro para o ponteiro do array de Jogadores (saída).
+ * @param totalJogadores Ponteiro para o total de jogadores (saída).
+ */
+void inicializarJogadores(struct Territorio *mapa, int totalTerritorios, struct Jogador **jogadores, int *totalJogadores) {
+    // 1. Contar cores únicas e armazená-las temporariamente
+    char coresUnicas[totalTerritorios][TAM_COR];
+    int count = 0;
+
+    for (int i = 0; i < totalTerritorios; i++) {
+        int corExiste = 0;
+        for (int j = 0; j < count; j++) {
+            if (strcmp(mapa[i].cor, coresUnicas[j]) == 0) {
+                corExiste = 1;
+                break;
+            }
+        }
+        if (!corExiste) {
+            strcpy(coresUnicas[count], mapa[i].cor);
+            count++;
+        }
+    }
+
+    *totalJogadores = count;
+
+    // 2. Alocar memória para os jogadores (struct Jogador)
+    *jogadores = (struct Jogador *)calloc(count, sizeof(struct Jogador));
+    if (*jogadores == NULL) {
+        printf("ERRO: Falha ao alocar memória para jogadores.\n");
+        exit(1);
+    }
+
+    // 3. Inicializar cada jogador e atribuir missão
+    printf("\n--- ATRIBUIÇÃO DE MISSÕES ---\n");
+    for (int i = 0; i < count; i++) {
+        struct Jogador *j = &(*jogadores)[i];
+
+        strcpy(j->cor, coresUnicas[i]);
+        j->missaoCumprida = 0;
+
+        // Armazenamento dinâmico da missão (Requisito: usar malloc/calloc)
+        j->missao = (char *)malloc(TAM_MISSAO * sizeof(char));
+        if (j->missao == NULL) {
+            printf("ERRO: Falha ao alocar memória para a missão do jogador %s.\n", j->cor);
+            // Liberar memória já alocada antes de sair
+            for (int k = 0; k < i; k++) free((*jogadores)[k].missao);
+            free(*jogadores);
+            exit(1);
+        }
+        
+        // Sorteio e cópia da missão
+        atribuirMissao(j->missao, MISSOES, MAX_MISSOES);
+        
+        printf("\nJogador %s (Cor %s) recebeu a missão:\n", j->cor, j->cor);
+        exibirMissao(j->missao); // Requisito: Passagem por valor (para exibição)
+    }
+}
+
+/**
+ * @brief Sorteia uma missão do vetor e copia para o destino.
+ * @param destino Ponteiro de destino (string) onde a missão será copiada.
+ * @param missoes Vetor de ponteiros para strings (missões pré-definidas).
+ * @param totalMissoes Número total de missões no vetor.
+ */
+void atribuirMissao(char* destino, const char* missoes[], int totalMissoes) {
+    // Sorteia um índice entre 0 e totalMissoes - 1
+    int indiceSorteado = rand() % totalMissoes;
+    // Cópia da string sorteada para a variável de missão do jogador
+    strcpy(destino, missoes[indiceSorteado]);
+}
+
+/**
+ * @brief Exibe a missão do jogador (Passagem por valor).
+ * @param missao A string da missão.
+ */
+void exibirMissao(const char* missao) {
+    printf("  [OBJETIVO]: %s\n", missao);
+}
+
+
+/**
+ * @brief Verifica se a missão de um jogador foi cumprida.
+ * * NOTE: A lógica de verificação é simplificada e deve ser expandida em um jogo real.
+ * Aqui, implementaremos a verificação baseada em um número de territórios e na eliminação.
+ * * @param missao Ponteiro constante para a string da missão do jogador.
+ * @param mapa Ponteiro constante para o array de territórios.
+ * @param totalTerritorios Número total de territórios.
+ * @param corJogador A cor do exército do jogador.
+ * @return 1 se a missão foi cumprida, 0 caso contrário.
+ */
+int verificarMissao(const char* missao, const struct Territorio* mapa, int totalTerritorios, const char* corJogador) {
+    // Lógica simples: Se a missão é 'Conquistar X territórios...'
+    // Apenas verificamos se o jogador possui 4 territórios OU se eliminou o Vermelho
+    
+    // Contagem de territórios do jogador atual
+    int countTerritorios = 0;
+    for (int i = 0; i < totalTerritorios; i++) {
+        if (strcmp(mapa[i].cor, corJogador) == 0) {
+            countTerritorios++;
+        }
+    }
+    
+    // Exemplo de verificação simples (Requisito: Lógica simples inicial)
+
+    // 1. Missão: "Conquistar 4 territórios seguidos em um único turno." (Simplificada para 4 no total)
+    if (strstr(missao, "Conquistar 4 territórios seguidos")) {
+        return countTerritorios >= 4;
+    }
+    
+    // 2. Missão: "Eliminar completamente todas as tropas do exército 'Vermelho'."
+    if (strstr(missao, "Eliminar todas as tropas da cor vermelha") || strstr(missao, "exército 'Vermelho'")) {
+        // Verifica se a cor "Vermelho" ainda está no mapa.
+        int corEliminada = 1;
+        for (int i = 0; i < totalTerritorios; i++) {
+            if (strcmp(mapa[i].cor, "Vermelho") == 0) {
+                corEliminada = 0;
+                break;
+            }
+        }
+        // A missão é só para o jogador que não é "Vermelho"
+        if (strcmp(corJogador, "Vermelho") != 0) {
+            return corEliminada; 
+        }
+    }
+
+    // 3. Missão: "Conquistar um total de 7 territórios ao longo do jogo."
+    if (strstr(missao, "Conquistar um total de 7 territórios")) {
+        return countTerritorios >= 7;
+    }
+
+    // Se a missão não foi reconhecida ou não tem condição simples, retorna 0
+    // Lógica Padrão de Emergência: Conquistar mais da metade dos territórios
+    return countTerritorios > (totalTerritorios / 2);
+}
+
+
+// --- Funções do Jogo e Memória ---
+
 /**
  * @brief Gerencia a interação do jogo e os ataques.
  * @param mapa Ponteiro para o array de structs dos territórios.
  * @param totalTerritorios Número de territórios.
+ * @param jogadores Ponteiro para o array de structs dos jogadores.
+ * @param totalJogadores Número de jogadores.
  */
-void simularJogo(struct Territorio *mapa, int totalTerritorios) {
+void simularJogo(struct Territorio *mapa, int totalTerritorios, struct Jogador *jogadores, int totalJogadores) {
     int opcao = 1;
     int indiceAtacante, indiceDefensor;
     
@@ -228,9 +408,22 @@ void simularJogo(struct Territorio *mapa, int totalTerritorios) {
                 continue;
             }
 
-            // Chamada da função de ataque, usando aritmética de ponteiros
-            // (mapa + (indice - 1)) retorna o endereço da struct desejada.
+            // Chamada da função de ataque
             atacar(mapa + (indiceAtacante - 1), mapa + (indiceDefensor - 1));
+
+            // Requisito: Verificação de Missão
+            printf("\n--- VERIFICAÇÃO DE MISSÕES ---\n");
+            for(int i = 0; i < totalJogadores; i++) {
+                struct Jogador *j = &jogadores[i];
+                // Verifica a missão se ainda não foi cumprida
+                if (j->missaoCumprida == 0 && verificarMissao(j->missao, mapa, totalTerritorios, j->cor)) {
+                    j->missaoCumprida = 1;
+                    printf("  *** VITÓRIA! O exército %s cumpriu sua missão! ***\n", j->cor);
+                    printf("  Missão: %s\n", j->missao);
+                    opcao = 0; // Encerra o jogo
+                    break;
+                }
+            }
 
         } else if (opcao != 0) {
             printf("Opção inválida. Tente novamente.\n");
@@ -239,14 +432,29 @@ void simularJogo(struct Territorio *mapa, int totalTerritorios) {
 }
 
 /**
- * @brief Libera a memória alocada dinamicamente para o mapa.
- * @param mapa Ponteiro para o array de structs.
+ * @brief Libera a memória alocada dinamicamente para o mapa e jogadores.
+ * @param mapa Ponteiro para o array de structs Territorio.
+ * @param jogadores Ponteiro para o array de structs Jogador.
+ * @param totalJogadores Número total de jogadores.
  */
-void liberarMemoria(struct Territorio *mapa) {
+void liberarMemoria(struct Territorio *mapa, struct Jogador *jogadores, int totalJogadores) {
+    // 1. Libera a memória das missões dos jogadores
+    if (jogadores != NULL) {
+        for (int i = 0; i < totalJogadores; i++) {
+            // Requisito: free() para evitar vazamento de memória
+            free(jogadores[i].missao); 
+        }
+        // 2. Libera a memória do array de jogadores
+        free(jogadores);
+        printf("\nMemória das missões e jogadores liberada.");
+    }
+
+    // 3. Libera a memória do array de territórios (mapa)
     if (mapa != NULL) {
         free(mapa);
-        printf("\nMemória alocada dinamicamente liberada com sucesso.\n");
+        printf("\nMemória do mapa de territórios liberada.");
     }
+    printf("\n");
 }
 
 // --- Função Principal (Main) ---
@@ -256,10 +464,13 @@ int main() {
     srand(time(NULL)); 
     
     struct Territorio *mapa = NULL;
+    struct Jogador *jogadores = NULL;
     int totalTerritorios = 0;
+    int totalJogadores = 0;
     
     printf("=======================================\n");
-    printf("         SIMULADOR DE WAR EM C         \n");
+    printf("        SIMULADOR DE WAR EM C          \n");
+    printf("       (Com Missões Estratégicas)      \n");
     printf("=======================================\n");
 
     // 1. Alocação Dinâmica de Territórios
@@ -274,21 +485,23 @@ int main() {
     mapa = (struct Territorio *) calloc(totalTerritorios, sizeof(struct Territorio));
 
     if (mapa == NULL) {
-        printf("ERRO: Falha ao alocar memória.\n");
+        printf("ERRO: Falha ao alocar memória para o mapa.\n");
         return 1;
     }
     
     // 2. Cadastro Inicial
-    // O ponteiro 'mapa' é passado para a função
     cadastrarTerritorios(mapa, totalTerritorios);
     
-    // 3. Simulação de Ataques
-    simularJogo(mapa, totalTerritorios);
+    // 3. Inicializa Jogadores e Atribui Missões
+    inicializarJogadores(mapa, totalTerritorios, &jogadores, &totalJogadores);
+    
+    // 4. Simulação de Ataques
+    simularJogo(mapa, totalTerritorios, jogadores, totalJogadores);
 
     printf("\n----------------- FIM DE JOGO ---------------------\n");
     
-    // 4. Liberação de Memória
-    liberarMemoria(mapa);
+    // 5. Liberação de Memória (Requisito: liberar toda a memória alocada dinamicamente)
+    liberarMemoria(mapa, jogadores, totalJogadores);
 
     return 0;
 }
