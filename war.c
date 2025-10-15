@@ -3,6 +3,8 @@
 #include <string.h>
 #include <time.h>
 
+
+
 // Definições de constantes
 #define TAM_NOME 30
 #define TAM_COR 10
